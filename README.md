@@ -3,8 +3,8 @@
 DaCypher (Agency Intel Ops) is a Streamlit cipher-missions game backed by a free
 PostgreSQL database (e.g. Supabase free tier or self-hosted).
 
-##Link to play:
-https://dacypher.streamlit.app/
+## Link to play:
+[DaCypher](https://dacypher.streamlit.app/)
 
 ## What the Game Does
 
