@@ -3,9 +3,6 @@
 DaCypher (Agency Intel Ops) is a Streamlit cipher-missions game backed by a free
 PostgreSQL database (e.g. Supabase free tier or self-hosted).
 
-## Link to play:
-[DaCypher](https://dacypher.streamlit.app/)
-
 ## What the Game Does
 
 You are an intelligence agent assigned to a decryption terminal. Each mission
@@ -33,6 +30,30 @@ submit the original phrase.
   (SUCCESS / FAILED), the cipher, and your answer.
 - **Leaderboard** score is updated in PostgreSQL on every correct answer.
 
+## Classroom Groups
+
+Groups turn the game into a class competition and are useful for tutorials or
+problem-solving sessions.
+
+- **Create a group.** Any agent can create one; the creator becomes the group
+  owner. The group gets a short, unique **join key** (for example `K7QM2P`).
+  Keys never contain `0`, `O`, `1` or `I`, so they are easy to read out in a
+  lecture room.
+- **Share the key.** Anyone who signs in and enters the key joins the group.
+  Keys are not case sensitive, and agents can belong to several groups.
+- **Compete on group standings.** Each member earns **group points** from the
+  missions they solve after joining. Standings rank members by group points,
+  then by missions solved, then by the least total time.
+- **Speed bonus.** Every solve pays its normal base points plus a speed bonus of
+  up to the same amount again. Par time is `90s + 20s × level`; solving faster
+  than par earns a proportionally larger bonus, and taking longer than par earns
+  none. Total and average solve times are shown in the standings.
+- **Owner controls.** The owner can generate a fresh join key at any time (for
+  example if a key leaks), and any member can leave a group.
+
+Group points are tracked per membership, so one agent's progress in a group is
+independent of their global score and of other groups they belong to.
+
 ## Hint Section — What is M I P B E?
 
 When you press **💡 Get Hint** during a mission, you receive five clues
@@ -53,8 +74,9 @@ active, the hint button simply displays the meanings of M, I, P, B, E.
 ## Project Structure
 
 - `app.py` — Streamlit UI: login (email/password + Google), codename setup,
-  missions, hints, scoring, debrief.
+  missions, hints, scoring, debrief, group arena and leaderboards.
 - `Cipher.py` — Cipher engine (encode/decode for each level band).
-- `database.py` — PostgreSQL helpers (accounts, users, progress, leaderboard).
+- `database.py` — PostgreSQL helpers (accounts, users, progress, leaderboard,
+  groups and group standings).
 - `wordbank.json` — Missions per level, each with M/I/P/B/E clues and the
   `answer`.

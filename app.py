@@ -1,7 +1,8 @@
-# app.py — Cipher Missions + Firebase (FINAL, DISPLAY FIXED)
+# app.py — Agency Intel Ops (Streamlit UI)
 
 import streamlit as st
 import json, random, time, logging, traceback
+import html
 import os
 import re
 import pandas as pd
@@ -94,13 +95,17 @@ defaults = {
     "show_clues": False,
     "history": [],
     "hint_uses": 0,
+    "nav_page": "🎯 Mission",
+    "active_group_id": None,
+    "pending_group_id": None,
+    "mission_flash": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # =========================
-# IMPORT GAME + FIREBASE
+# IMPORT GAME + DATABASE
 # =========================
 from Cipher import encode_for_level
 from database import (
@@ -119,6 +124,14 @@ from database import (
     uid_for_email,
     store_oauth_state,
     consume_oauth_state,
+    create_group,
+    join_group,
+    get_groups_for_uid,
+    get_group_standings,
+    record_group_progress,
+    rotate_group_code,
+    leave_group,
+    get_leaderboard,
 )
 
 # =========================
@@ -143,6 +156,276 @@ def start_new_mission():
     st.session_state.start_time = time.time()
     st.session_state.mission_started = True
     st.session_state.show_clues = False
+
+
+# =========================
+# GROUP ARENA
+# =========================
+
+def format_duration(seconds):
+    seconds = max(0, int(round(float(seconds or 0))))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def par_seconds(level):
+    """Target time for a mission. Faster than this earns a speed bonus."""
+    return 90 + 20 * int(level)
+
+
+def speed_bonus(level, elapsed_seconds):
+    """Group points awarded for speed: up to the mission's base value."""
+    if elapsed_seconds is None:
+        return 0
+    base = 5 + int(level) // 2
+    par = par_seconds(level)
+    remaining = max(0.0, par - float(elapsed_seconds))
+    return int(round(base * remaining / par))
+
+
+def _set_active_group(group_id):
+    st.session_state.active_group_id = group_id
+    # Applied at the top of the next run, before the picker is created.
+    st.session_state.pending_group_id = group_id
+
+
+def render_group_arena():
+    uid = st.session_state.uid
+    codename = st.session_state.player or st.session_state.codename or "Agent"
+
+    st.markdown("## 🏫 Group Arena")
+    st.caption(
+        "Create a group, share the key with your class, and race to the top of "
+        "the standings. Group points are earned by missions you solve after "
+        "joining, and quick solves earn a speed bonus."
+    )
+
+    # Widget state may only be written before the widget exists in this run.
+    pending_group_id = st.session_state.pop("pending_group_id", None)
+    if pending_group_id:
+        st.session_state.active_group_id = pending_group_id
+        st.session_state["group_picker"] = pending_group_id
+
+    flash = st.session_state.pop("group_flash", None)
+    if flash:
+        st.success(flash)
+
+    try:
+        my_groups = get_groups_for_uid(uid)
+    except Exception:
+        logging.exception("Could not load groups.")
+        st.error("The group board is temporarily unavailable. Please try again.")
+        my_groups = []
+
+    if my_groups:
+        by_id = {group["id"]: group for group in my_groups}
+        ids = list(by_id)
+        if st.session_state.active_group_id not in by_id:
+            st.session_state.active_group_id = ids[0]
+            st.session_state["group_picker"] = ids[0]
+
+        active_id = st.selectbox(
+            "Group",
+            options=ids,
+            index=ids.index(st.session_state.active_group_id),
+            format_func=lambda gid: by_id[gid]["name"],
+            key="group_picker",
+        )
+        st.session_state.active_group_id = active_id
+        group = by_id[active_id]
+        is_owner = group["owner_uid"] == uid
+
+        st.markdown(
+            f"""
+            <div class="dark-box" style="font-size:15px;">
+                <b>{html.escape(group['name'])}</b><br>
+                {group['member_count']} member(s) &middot; you are
+                {'the group owner' if is_owner else 'a member'}<br><br>
+                Join key:
+                <b style="letter-spacing:5px;font-size:20px;">{group['join_code']}</b><br>
+                <span style="color:#8fc8b8;">Share this key &mdash; anyone with it can join.</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("### 🏆 Group Standings")
+        try:
+            standings = get_group_standings(active_id)
+        except Exception:
+            logging.exception("Could not load group standings.")
+            standings = []
+
+        if standings:
+            rows = []
+            my_rank = None
+            for rank, row in enumerate(standings, start=1):
+                if row["uid"] == uid:
+                    my_rank = rank
+                rows.append(
+                    {
+                        "Rank": rank,
+                        "Agent": row["codename"],
+                        "Points": row["score"],
+                        "Solved": row["missions"],
+                        "Total time": format_duration(row["total_seconds"]),
+                        "Avg time": (
+                            format_duration(row["total_seconds"] / row["missions"])
+                            if row["missions"]
+                            else "—"
+                        ),
+                    }
+                )
+            st.dataframe(
+                pd.DataFrame(rows), hide_index=True, use_container_width=True
+            )
+            if my_rank:
+                st.caption(f"Your position: #{my_rank} of {len(rows)}")
+        else:
+            st.info("No one has solved a mission in this group yet.")
+
+        st.caption(
+            f"Speed bonus: each solve pays its base points, plus up to the same "
+            f"again for speed. Par time is {par_seconds(1)}s at level 1 and grows "
+            f"by 20s per level; the bonus shrinks as you take longer and reaches "
+            f"zero at par."
+        )
+
+        top_left, top_right = st.columns(2)
+        with top_left:
+            if is_owner:
+                if st.button("🔄 Generate new join key", use_container_width=True):
+                    try:
+                        new_code = rotate_group_code(active_id, uid)
+                    except Exception:
+                        logging.exception("Could not rotate group key.")
+                        new_code = None
+                    if new_code:
+                        st.session_state.group_flash = (
+                            f"New join key: {new_code} — share the new key."
+                        )
+                        st.rerun()
+                    else:
+                        st.error("Could not create a new key. Please try again.")
+            else:
+                st.caption("Only the group owner can change the join key.")
+        with top_right:
+            if st.button("🚪 Leave this group", use_container_width=True):
+                try:
+                    leave_group(active_id, uid)
+                except Exception:
+                    logging.exception("Could not leave group.")
+                    st.error("Could not leave the group. Please try again.")
+                else:
+                    st.session_state.active_group_id = None
+                    st.session_state.group_flash = f"You left {group['name']}."
+                    st.rerun()
+    else:
+        st.session_state.active_group_id = None
+        st.info(
+            "You are not in a group yet. Create one below, or join with the key "
+            "your instructor gave you."
+        )
+
+    st.divider()
+    create_col, join_col = st.columns(2)
+
+    with create_col:
+        st.markdown("### ➕ Create a group")
+        st.caption("You become the owner and get a key to share.")
+        with st.form("create_group_form", clear_on_submit=True):
+            group_name = st.text_input(
+                "Group name", placeholder="e.g. CS101 — Team Alpha", max_chars=60
+            )
+            create_clicked = st.form_submit_button("CREATE GROUP")
+
+        if create_clicked:
+            if not (group_name or "").strip():
+                st.error("Enter a group name.")
+            else:
+                try:
+                    created = create_group(group_name, uid, codename)
+                except ValueError as exc:
+                    created = False
+                    st.error(str(exc))
+                except Exception:
+                    logging.exception("Could not create group.")
+                    created = False
+                    st.error("The database is temporarily unavailable. Please try again.")
+                if created:
+                    _set_active_group(created["id"])
+                    st.session_state.group_flash = (
+                        f"Group '{created['name']}' created. "
+                        f"Share join key {created['join_code']} with your class."
+                    )
+                    st.rerun()
+
+    with join_col:
+        st.markdown("### 🔑 Join a group")
+        st.caption("Ask your instructor for the group key.")
+        with st.form("join_group_form", clear_on_submit=True):
+            entered_code = st.text_input(
+                "Join key", placeholder="e.g. K7QM2P", max_chars=12
+            )
+            join_clicked = st.form_submit_button("JOIN GROUP")
+
+        if join_clicked:
+            if not (entered_code or "").strip():
+                st.error("Enter the join key you were given.")
+            else:
+                try:
+                    joined = join_group(entered_code, uid, codename)
+                except Exception:
+                    logging.exception("Could not join group.")
+                    joined = False
+                    st.error("The database is temporarily unavailable. Please try again.")
+                if joined:
+                    _set_active_group(joined["id"])
+                    st.session_state.group_flash = (
+                        f"Joined '{joined['name']}'. Missions you solve from now "
+                        f"on count for this group."
+                    )
+                    st.rerun()
+                elif joined is None:
+                    st.error(
+                        "That key did not match a group. Check it with your instructor."
+                    )
+
+
+def render_global_leaderboard():
+    st.markdown("## 🏆 Global Standings")
+    st.caption("Every agent, ranked by total mission points.")
+    try:
+        rows = get_leaderboard(50)
+    except Exception:
+        logging.exception("Could not load leaderboard.")
+        st.error("The leaderboard is temporarily unavailable. Please try again.")
+        return
+
+    if not rows:
+        st.info("No scores yet — solve a mission to appear here.")
+        return
+
+    table = pd.DataFrame(
+        [
+            {"Rank": rank, "Agent": row["username"], "Score": row["score"]}
+            for rank, row in enumerate(rows, start=1)
+        ]
+    )
+    st.dataframe(table, hide_index=True, use_container_width=True)
+    my_name = st.session_state.player
+    my_row = next((r for r in rows if r["username"] == my_name), None)
+    if my_row:
+        st.caption(
+            f"You are on the global board at {my_row['score']} points. "
+            f"Use the Group Arena to compete with your class."
+        )
+
 
 # =========================
 # USER LOADING
@@ -488,6 +771,29 @@ st.markdown(
 )
 
 # =========================
+# NAVIGATION
+# =========================
+page = st.segmented_control(
+    "Navigation",
+    options=["🎯 Mission", "🏫 Group Arena", "🏆 Leaderboard"],
+    default="🎯 Mission",
+    label_visibility="collapsed",
+    key="nav_page",
+)
+
+if page == "🏫 Group Arena":
+    render_group_arena()
+    st.stop()
+
+if page == "🏆 Leaderboard":
+    render_global_leaderboard()
+    st.stop()
+
+flash = st.session_state.pop("mission_flash", None)
+if flash:
+    st.success(flash)
+
+# =========================
 # INTERCEPTED TRANSMISSION
 # =========================
 st.markdown("### 📡 Intercepted Transmission")
@@ -555,15 +861,36 @@ if st.session_state.mission_started:
         })
 
         if is_correct:
-            points = 5 + st.session_state.level // 2
-            st.session_state.score += points
-            st.success(f"✅ Correct! +{points} points")
+            level = st.session_state.level
+            points = 5 + level // 2
+            elapsed = (
+                int(time.time() - st.session_state.start_time)
+                if st.session_state.start_time
+                else None
+            )
+            bonus = speed_bonus(level, elapsed)
 
-            update_level(st.session_state.uid, st.session_state.level + 1)
+            st.session_state.score += points
+
+            update_level(st.session_state.uid, level + 1)
             update_score(st.session_state.uid, st.session_state.score)
             update_leaderboard(st.session_state.player, st.session_state.score)
+            try:
+                record_group_progress(
+                    st.session_state.uid, points + bonus, elapsed or 0
+                )
+            except Exception:
+                logging.exception("Could not update group standings.")
 
-            st.session_state.level += 1
+            message = f"✅ Correct! +{points} points."
+            if bonus:
+                message += (
+                    f" ⚡ Speed bonus +{bonus} "
+                    f"(solved in {format_duration(elapsed)})."
+                )
+            st.session_state.mission_flash = message
+
+            st.session_state.level = level + 1
             st.session_state.mission_started = False
             start_new_mission()
             st.rerun()
