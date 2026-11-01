@@ -74,6 +74,24 @@ def _ensure_schema(pool_):
                 ADD COLUMN IF NOT EXISTS code_verifier TEXT;
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS leaderboard (
+                    username TEXT PRIMARY KEY,
+                    score INTEGER NOT NULL DEFAULT 0
+                );
+                """
+            )
+            # Supabase exposes the `public` schema through PostgREST, so any
+            # table without RLS is reachable with the public anon key. This app
+            # never uses PostgREST (psycopg2 connects as the table owner, which
+            # bypasses RLS), so enabling RLS with no policies closes that
+            # exposure without affecting the app. Do NOT use FORCE ROW LEVEL
+            # SECURITY: that would apply RLS to the owner too and break writes.
+            for table in ("users", "accounts", "leaderboard", "oauth_states"):
+                cur.execute(
+                    f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY;"
+                )
         conn.commit()
     finally:
         pool_.putconn(conn)
