@@ -339,9 +339,7 @@ def render_group_arena():
         st.markdown("### ➕ Create a group")
         st.caption("You become the owner and get a key to share.")
         with st.form("create_group_form", clear_on_submit=True):
-            group_name = st.text_input(
-                "Group name", placeholder="e.g. CS101 — Team Alpha", max_chars=60
-            )
+            group_name = st.text_input("Group name", max_chars=60)
             create_clicked = st.form_submit_button("CREATE GROUP")
 
         if create_clicked:
@@ -369,9 +367,7 @@ def render_group_arena():
         st.markdown("### 🔑 Join a group")
         st.caption("Ask your instructor for the group key.")
         with st.form("join_group_form", clear_on_submit=True):
-            entered_code = st.text_input(
-                "Join key", placeholder="e.g. K7QM2P", max_chars=12
-            )
+            entered_code = st.text_input("Join key", max_chars=12)
             join_clicked = st.form_submit_button("JOIN GROUP")
 
         if join_clicked:
