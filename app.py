@@ -105,6 +105,21 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # =========================
+# SESSION HELPERS
+# =========================
+def logout():
+    """Forget the current agent and return to the login screen."""
+    for key in list(defaults) + [
+        "login_email",
+        "login_password",
+        "reg_email",
+        "reg_password",
+    ]:
+        st.session_state.pop(key, None)
+    st.rerun()
+
+
+# =========================
 # IMPORT GAME + DATABASE
 # =========================
 from Cipher import encode_for_level
@@ -759,12 +774,17 @@ if st.session_state.auth_email and not st.session_state.uid_loaded:
 # =========================
 # HEADER
 # =========================
-st.markdown("## 🕵️ Agency Intel Ops — Decryption Terminal")
-st.markdown(
-    f"**Agent:** {st.session_state.player or '—'} | "
-    f"**Level:** {st.session_state.level} | "
-    f"**Score:** {st.session_state.score}"
-)
+header_info, header_action = st.columns([5, 1])
+with header_info:
+    st.markdown("## 🕵️ Agency Intel Ops — Decryption Terminal")
+    st.markdown(
+        f"**Agent:** {st.session_state.player or '—'} | "
+        f"**Level:** {st.session_state.level} | "
+        f"**Score:** {st.session_state.score}"
+    )
+with header_action:
+    if st.button("🚪 Log Out", use_container_width=True):
+        logout()
 
 # =========================
 # NAVIGATION
